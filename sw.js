@@ -1,5 +1,5 @@
 // Cambia el número de versión cada vez que actualices index.html
-const CACHE = 'nomina-v1';
+const CACHE = 'nomina-v2';
 const FILES = ['./', './index.html', './manifest.json', './icon-180.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -13,9 +13,10 @@ self.addEventListener('activate', e => {
   self.clients.claim();
 });
 
-// Primero intenta la red (para recibir actualizaciones); sin conexión usa la copia guardada
+// Solo guarda los archivos de la propia app; las conexiones con GitHub (sincronización) no se guardan
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
+  if (new URL(e.request.url).origin !== self.location.origin) return;
   e.respondWith(
     fetch(e.request)
       .then(r => { const copy = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); return r; })
