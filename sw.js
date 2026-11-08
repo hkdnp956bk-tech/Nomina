@@ -1,5 +1,5 @@
 // Cambia el número de versión cada vez que actualices index.html
-const CACHE = 'nomina-v2';
+const CACHE = 'nomina-v3';
 const FILES = ['./', './index.html', './manifest.json', './icon-180.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
