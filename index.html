@@ -217,7 +217,7 @@ function eur(n,sign){n=+n||0;const neg=n<0;let[i,d]=Math.abs(n).toFixed(2).split
 function num(s){if(typeof s==='number')return s;s=String(s??'').replace(/[€\s]/g,'').replace(/[−–]/g,'-');if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');const v=parseFloat(s);return isFinite(v)?v:0}
 const fmtIn=n=>(n==null||n==='')?'':String(+(+n).toFixed(2)).replace('.',',');
 
-const S={cfg:clone(DEF),recs:{},mode:'local',col:null,tab:'resumen',draft:null,dirty:false,range:'anio',started:false,wiz:null};
+const S={cfg:clone(DEF),recs:{},mode:'local',col:null,tab:'resumen',draft:null,dirty:false,range:'anio',rmes:null,started:false,wiz:null};
 
 /* ---------- almacenamiento ---------- */
 const OLDP={refuerzos:554.24,glab:510.34,gfest:792.72,glab4:561.51,gfest4:871.92,gloc:255.17};
@@ -482,7 +482,7 @@ function vMeses(){
 function rangeMonths(){
   const cur=ym(), top=addM(cur,1);
   let ms=monthsAll().filter(M=>M<=top&&hasData(M));
-  if(S.range==='mes'){ms=ms.filter(M=>M===cur)}
+  if(S.range==='mes'){if(!S.rmes||!ms.includes(S.rmes))S.rmes=ms.includes(cur)?cur:(ms.slice().sort().pop()||null);ms=ms.filter(M=>M===S.rmes)}
   else if(S.range==='anio'){const y=cur.slice(0,4);ms=ms.filter(M=>M.startsWith(y))}
   return ms.sort();
 }
@@ -507,7 +507,11 @@ function chartSVG(rows){
 }
 function vAnalisis(){
   const ms=rangeMonths();
-  const seg=`<div class="seg" role="group" aria-label="Periodo">${[['mes','Este mes'],['anio','Este año'],['todo','Todo']].map(([k,l])=>`<button data-act="range" data-r="${k}" aria-pressed="${S.range===k}">${l}</button>`).join('')}</div>`;
+  const segB=`<div class="seg" role="group" aria-label="Periodo">${[['mes','Mes'],['anio','Este año'],['todo','Todo']].map(([k,l])=>`<button data-act="range" data-r="${k}" aria-pressed="${S.range===k}">${l}</button>`).join('')}</div>`;
+  let mSel='';
+  if(S.range==='mes'){const top=addM(ym(),1);const opts=monthsAll().filter(M=>M<=top&&hasData(M)).sort().reverse();
+    mSel=opts.length?`<select class="inp" id="rmes" aria-label="Elegir nómina" style="width:auto;min-height:34px;padding:5px 8px;font-size:13px">${opts.map(M=>`<option value="${M}"${M===S.rmes?' selected':''}>${cap(lab(M))}</option>`).join('')}</select>`:''}
+  const seg=`<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${mSel}${segB}</div>`;
   const exportBlock=`<h3 class="sec">Exportar datos</h3><div class="card"><p class="small muted" style="margin:0 0 10px">El CSV abre en Excel o Numbers con una fila por nómina. La copia JSON guarda tarifas y registros completos y sirve para restaurarlos.</p>
     <div class="btns" style="margin-top:0"><button class="btn primary" data-act="csv">Descargar CSV</button><button class="btn" data-act="json">Copia de seguridad (JSON)</button><button class="btn" data-act="import">Restaurar copia</button></div></div>`+SY.block();
   if(!ms.length)return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3 class="sec">Análisis</h3>${seg}</div><div class="card empty">Sin datos en este periodo. El análisis se completa al registrar la actividad de cada mes y anotar lo cobrado.</div>`+exportBlock;
@@ -785,7 +789,7 @@ document.addEventListener('input',e=>{
     if(!S.dirty){S.dirty=true;const m=document.getElementById('main');m.insertAdjacentHTML('beforeend',`<div class="savebar"><span class="small">Cambios sin guardar</span><span style="display:flex;gap:8px"><button class="btn" data-act="discard">Descartar</button><button class="btn primary" data-act="savecfg">Guardar tarifas</button></span></div>`)}
   }
 });
-document.addEventListener('change',e=>{if(e.target.dataset.cfg==='auto'||e.target.tagName==='SELECT')e.target.dispatchEvent(new Event('input',{bubbles:true}))});
+document.addEventListener('change',e=>{if(e.target.id==='rmes'){S.rmes=e.target.value;render();return}if(e.target.dataset.cfg==='auto'||e.target.tagName==='SELECT')e.target.dispatchEvent(new Event('input',{bubbles:true}))});
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'&&M_EL.innerHTML){closeModal();return}
   if(e.key==='Enter'&&S.wiz&&e.target.tagName==='INPUT'){e.preventDefault();const st=S.wiz.steps[S.wiz.i];if(st.k==='sum')wizSave();else{S.wiz.i++;wizRender()}}
