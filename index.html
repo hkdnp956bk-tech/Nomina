@@ -199,7 +199,7 @@ const DEF={
     {id:'glab4',n:'G. Laboral 4º',v:0,t:'b'},
     {id:'gfest4',n:'G. Festivo 4º',v:0,t:'b'},
     {id:'gloc',n:'G. Localizada',v:0,t:'b'},
-    {id:'trasplante',n:'Transplante',v:0,t:'b'},
+    {id:'trasplante',n:'Trasplante',v:0,t:'b'},
     {id:'curso',n:'Curso',v:0,t:'b'}
   ]
 };
@@ -223,9 +223,10 @@ const S={cfg:clone(DEF),recs:{},mode:'local',col:null,tab:'resumen',draft:null,d
 const OLDP={refuerzos:554.24,glab:510.34,gfest:792.72,glab4:561.51,gfest4:871.92,gloc:255.17};
 const NEWP={refuerzos:651.78,glab:651.78,gfest:1012.08,glab4:716.89,gfest4:1113.36,gloc:325.89};
 function migFijos(fs){return fs.filter(f=>f.id!=='cvac'&&f.id!=='itzarri')}
-function migExtras(es){es.forEach(e=>{if(OLDP[e.id]!=null&&Math.abs((+e.v)-OLDP[e.id])<0.005)e.v=NEWP[e.id]});return es}
+function migExtras(es){es.forEach(e=>{if(e.n==='Transplante')e.n='Trasplante';if(OLDP[e.id]!=null&&Math.abs((+e.v)-OLDP[e.id])<0.005)e.v=NEWP[e.id]});return es}
 function migRec(r){if(!r)return false;const b=JSON.stringify(r);if(r.fijosSnap)r.fijosSnap=migFijos(r.fijosSnap);if(r.preciosAct)r.preciosAct=migExtras(r.preciosAct);return JSON.stringify(r)!==b}
-function mergeCfg(c){const o=clone(DEF);if(!c)return o;for(const k of Object.keys(o))if(c[k]!==undefined)o[k]=clone(c[k]);if((c.ver||1)<2){o.fijos=migFijos(o.fijos);o.extras=migExtras(o.extras);o.ver=2;S.needCfgSave=true}return o}
+function mergeCfg(c){const o=clone(DEF);if(!c)return o;for(const k of Object.keys(o))if(c[k]!==undefined)o[k]=clone(c[k]);if((c.ver||1)<2){o.fijos=migFijos(o.fijos);o.extras=migExtras(o.extras);o.ver=2;S.needCfgSave=true}
+  o.extras.forEach(e=>{if(e.n==='Transplante'){e.n='Trasplante';S.needCfgSave=true}});return o}
 function loadLocal(){try{const raw=localStorage.getItem(LSKEY);if(raw){const d=JSON.parse(raw);S.cfg=mergeCfg(d.cfg);S.recs=d.recs||{};let ch=!!S.needCfgSave;S.needCfgSave=false;Object.values(S.recs).forEach(r=>{if(migRec(r))ch=true});if(ch)saveLocal()}}catch(e){}}
 function saveLocal(){try{localStorage.setItem(LSKEY,JSON.stringify({cfg:S.cfg,recs:S.recs}))}catch(e){}}
 /* ---------- sincronización cifrada con GitHub ---------- */
