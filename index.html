@@ -144,6 +144,15 @@ td:first-child{font-family:var(--body);text-transform:capitalize}
 .stepper{display:grid;grid-template-columns:56px 1fr 56px;gap:10px;align-items:center;margin:20px 0 8px}
 .stepper button{height:56px;border-radius:8px;border:1px solid var(--line);background:var(--bg);font-size:26px;line-height:1}
 .stepper input{text-align:center;font:500 34px/1 var(--mono);height:56px;border:1px solid var(--line);border-radius:8px;background:var(--bg);width:100%;min-width:0}
+.nirow{border-top:1px solid var(--line);padding:10px 0}
+.nirow.unk{background:color-mix(in srgb,var(--brass) 10%,transparent);margin:0 -8px;padding:10px 8px;border-radius:6px}
+.nirow.ign .kv .x{border:1px solid var(--line);background:var(--surface);border-radius:5px;width:32px;height:30px;color:var(--neg);font-size:16px;flex:none}
+.nihead{opacity:.55}
+.nihead{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.nihead .k{font-size:14px}
+.nictl{display:flex;gap:6px;align-items:center;margin-top:6px}
+.nictl select{flex:1;min-width:0;min-height:36px;padding:5px 8px;font-size:13px}
+.nictl input{min-height:36px;padding:5px 8px}
 .calcline{font-family:var(--mono);font-size:13.5px;color:var(--muted);text-align:center}
 .grp{font:600 11px/1 var(--body);letter-spacing:.14em;text-transform:uppercase;color:var(--brass);margin:16px 0 4px}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom,0px));z-index:30;background:var(--ink);color:var(--bg);padding:10px 14px;border-radius:6px;font-size:14px;max-width:calc(100% - 32px)}
@@ -168,6 +177,7 @@ textarea.inp{min-height:160px;font-family:var(--mono);font-size:12px}
 <div id="modal"></div>
 <div class="toast" id="toast" hidden></div>
 <input type="file" id="importFile" accept="application/json,.json" hidden>
+<input type="file" id="nomFile" accept="image/*,application/pdf,.pdf" hidden>
 
 <script>
 (()=>{
@@ -201,7 +211,8 @@ const DEF={
     {id:'gloc',n:'G. Localizada',v:0,t:'b'},
     {id:'trasplante',n:'Trasplante',v:0,t:'b'},
     {id:'curso',n:'Curso',v:0,t:'b'}
-  ]
+  ],
+  rules:[]
 };
 const MESES=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 const LSKEY='nomina-alex-v1';
@@ -213,7 +224,7 @@ const mesN=id=>MESES[+id.split('-')[1]-1];
 const lab=id=>mesN(id)+' '+id.split('-')[0];
 const labS=id=>mesN(id).slice(0,3)+' '+id.split('-')[0].slice(2);
 const cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
-function eur(n,sign){n=+n||0;const neg=n<0;let[i,d]=Math.abs(n).toFixed(2).split('.');i=i.replace(/\B(?=(\d{3})+(?!\d))/g,'.');return(neg?'−':(sign&&n>0?'+':''))+i+','+d+' €'}
+function eur(n,sign){n=Math.round((+n||0)*100)/100||0;const neg=n<0;let[i,d]=Math.abs(n).toFixed(2).split('.');i=i.replace(/\B(?=(\d{3})+(?!\d))/g,'.');return(neg?'−':(sign&&n>0?'+':''))+i+','+d+' €'}
 function num(s){if(typeof s==='number')return s;s=String(s??'').replace(/[€\s]/g,'').replace(/[−–]/g,'-');if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');const v=parseFloat(s);return isFinite(v)?v:0}
 const fmtIn=n=>(n==null||n==='')?'':String(+(+n).toFixed(2)).replace('.',',');
 
@@ -372,6 +383,291 @@ function init(){
 return{mark,soon,now,block,setup,off,init};
 })();
 const Q={};
+/* ---------- leer nómina (captura o PDF) ---------- */
+const NI=(()=>{
+const TESS='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+const norm=s=>String(s??'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
+const clean=t=>String(t).replace(/^[|\[\](){}_'"`]+|[|\[\](){}_'"`]+$/g,'');
+const isNum=t=>/^-?\d[\d.,]*[.,]\d{2}$/.test(clean(t));
+function pnum(t){t=clean(t);const neg=t.startsWith('-');t=t.replace(/^-/,'');const i=Math.max(t.lastIndexOf(','),t.lastIndexOf('.'));const v=parseFloat(t.slice(0,i).replace(/[.,]/g,'')+'.'+t.slice(i+1));return neg?-v:v}
+const r2=v=>Math.round(v*100)/100;
+let st=null; // estado de la revisión
+
+function status(msg){const el=document.getElementById('niSt');if(el)el.textContent=msg}
+function loadScript(src){return new Promise((res,rej)=>{if(window.Tesseract)return res();const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error('net'));document.head.appendChild(s)})}
+
+/* --- extracción de texto con posiciones --- */
+async function fromImageSource(src,w,h){
+  const k=Math.min(3,Math.max(1,2400/w));
+  const c=document.createElement('canvas');c.width=Math.round(w*k);c.height=Math.round(h*k);
+  const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(src,0,0,c.width,c.height);
+  const im=x.getImageData(0,0,c.width,c.height),d=im.data;
+  for(let i=0;i<d.length;i+=4){const g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];d[i]=d[i+1]=d[i+2]=g}
+  x.putImageData(im,0,0);
+  status('Preparando el lector de imágenes…');
+  try{await loadScript(TESS)}catch(e){throw new Error('Para leer capturas hace falta conexión a internet la primera vez.')}
+  const wk=await Tesseract.createWorker('spa',1,{logger:m=>{if(m.status==='recognizing text')status('Leyendo la nómina… '+Math.round((m.progress||0)*100)+' %');else if(/load|init/.test(m.status||''))status('Preparando el lector de imágenes…')}});
+  try{
+    await wk.setParameters({tessedit_pageseg_mode:'6'});
+    const {data}=await wk.recognize(c);
+    return (data.words||[]).filter(w=>w.text&&w.text.trim()).map(w=>({t:w.text.trim(),x0:w.bbox.x0,x1:w.bbox.x1,y0:w.bbox.y0,y1:w.bbox.y1}));
+  }finally{wk.terminate()}
+}
+async function fromImage(file){
+  const url=URL.createObjectURL(file);
+  try{const img=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=()=>rej(new Error('img'));i.src=url});
+    return await fromImageSource(img,img.naturalWidth,img.naturalHeight)}
+  finally{URL.revokeObjectURL(url)}
+}
+async function fromPDF(file){
+  status('Abriendo el PDF…');
+  const pdfjs=await import('./pdf.min.js');
+  pdfjs.GlobalWorkerOptions.workerSrc='./pdf.worker.min.js';
+  const doc=await pdfjs.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
+  const page=await doc.getPage(1),vp=page.getViewport({scale:1});
+  const tc=await page.getTextContent();
+  const toks=[];
+  tc.items.forEach(it=>{const s=it.str||'';if(!s.trim())return;
+    const x=it.transform[4],h=Math.abs(it.transform[3])||it.height||8,yb=vp.height-it.transform[5],cw=(it.width||s.length*h*0.5)/s.length;
+    const re=/\S+/g;let m;while((m=re.exec(s))){toks.push({t:m[0],x0:x+m.index*cw,x1:x+(m.index+m[0].length)*cw,y0:yb-h,y1:yb})}});
+  if(toks.length>20)return toks;
+  // PDF escaneado: se lee como imagen
+  const sc=3,c=document.createElement('canvas');const v2=page.getViewport({scale:sc});c.width=v2.width;c.height=v2.height;
+  await page.render({canvasContext:c.getContext('2d'),viewport:v2}).promise;
+  return fromImageSource(c,c.width,c.height);
+}
+
+/* --- interpretación de la tabla --- */
+function parse(toks){
+  toks.forEach(t=>{t.yc=(t.y0+t.y1)/2;t.xc=(t.x0+t.x1)/2;t.h=t.y1-t.y0});
+  const hs=toks.map(t=>t.h).sort((a,b)=>a-b),mh=hs[Math.floor(hs.length/2)]||10;
+  const sorted=toks.slice().sort((a,b)=>a.yc-b.yc);
+  const rows=[];
+  sorted.forEach(t=>{const r=rows[rows.length-1];if(r&&Math.abs(t.yc-r.yc)<mh*0.55){r.t.push(t);r.yc=(r.yc*(r.t.length-1)+t.yc)/r.t.length}else rows.push({yc:t.yc,t:[t]})});
+  rows.forEach(r=>{r.t.sort((a,b)=>a.x0-b.x0);r.txt=norm(r.t.map(t=>t.t).join(' '))});
+  const W=Math.max(...toks.map(t=>t.x1));
+  const L=t=>clean(t.t).toUpperCase().replace(/[^A-ZÑ]/g,'');
+  const hdr={};
+  [['cant','CANTIDAD'],['prec','PRECIO'],['dev','DEVENGOS'],['ded','DEDUCC']].forEach(([k,w])=>{const t=toks.find(t=>L(t).includes(w));if(t)hdr[k]=t});
+  const col={cant:hdr.cant?hdr.cant.xc:W*.59,prec:hdr.prec?hdr.prec.xc:W*.675,dev:hdr.dev?hdr.dev.xc:W*.77,ded:hdr.ded?hdr.ded.xc:W*.89};
+  const hY=Math.max(...Object.values(hdr).map(t=>t.y1),-Infinity);
+  let start=rows.findIndex(r=>r.yc>hY);
+  if(!isFinite(hY)){start=rows.findIndex(r=>/conceptos/.test(r.txt));start=start<0?0:start+1}
+  let end=rows.findIndex((r,i)=>i>=start&&/\b(total|guztira)\b/.test(r.txt)&&!/neto/.test(r.txt));
+  if(end<0)end=rows.findIndex((r,i)=>i>=start&&/neto|base imponible|seguridad social/.test(r.txt));
+  if(end<0)end=rows.length;
+  const colOf=t=>{let best='dev',bd=Infinity;for(const k in col){const d=Math.abs(t.xc-col[k]);if(d<bd){bd=d;best=k}}return best};
+  const lines=[];
+  for(let i=start;i<end;i++){
+    const r=rows[i],o={name:'',cant:null,prec:null,dev:null,ded:null};
+    const words=[];
+    r.t.forEach(t=>{if(isNum(t.t)){o[colOf(t)]=pnum(t.t)}else{const c=clean(t.t);if(c&&c!=='ATR'&&!/^[|.,:;\-–_*]+$/.test(c))words.push(c)}});
+    o.name=words.join(' ').replace(/\s+/g,' ').trim();
+    if(o.name&&(o.dev!=null||o.ded!=null))lines.push(o);
+  }
+  let totDev=null,totDed=null;
+  if(end<rows.length&&/\b(total|guztira)\b/.test(rows[end].txt)){rows[end].t.forEach(t=>{if(isNum(t.t)){const c=colOf(t);if(c==='dev')totDev=pnum(t.t);if(c==='ded')totDed=pnum(t.t)}})}
+  let neto=null;
+  const nt=toks.find(t=>/^NETO$/i.test(clean(t.t)));
+  if(nt){const cands=toks.filter(t=>isNum(t.t)&&t.xc>nt.x1&&Math.abs(t.yc-nt.yc)<mh*3).sort((a,b)=>Math.abs(a.yc-nt.yc)-Math.abs(b.yc-nt.yc));if(cands.length)neto=pnum(cands[0].t)}
+  const all=rows.map(r=>r.t.map(t=>t.t).join(' ')).join(' ');
+  const pm=all.match(/(\d{2})[.\/-](\d{2})[.\/-](20\d{2})/);
+  return{M:pm?pm[3]+'-'+pm[2]:null,lines,totDev,totDed,neto};
+}
+
+/* --- asignación de conceptos --- */
+const HOURS={refuerzos:17,glab:17,glab4:17,gfest:24,gfest4:24,procorta:7.03,prolarga:10.88};
+function builtin(n,l){
+  const has=id=>S.cfg.fijos.some(f=>f.id===id),hasE=id=>S.cfg.extras.some(e=>e.id===id);
+  const F=id=>has(id)?'f:'+id:'?',E=id=>hasE(id)?'e:'+id:'?';
+  if(/itzarri|primas seguro|\bpror\b/.test(n))return'ign';
+  if(/comedor/.test(n)&&!(l.dev||l.ded))return'ign';
+  if(/irpf/.test(n)&&l.ded!=null)return'irpf';
+  if(/^cuota\b|cuota trabajador|cuota mei/.test(n)&&l.ded!=null)return'ss';
+  if(/sueldo base/.test(n))return F('sueldo');
+  if(/diferencia antiguedad/.test(n))return F('difantig');
+  if(/antiguedad/.test(n))return F('antig');
+  if(/especifico.*hospitalizacion/.test(n))return F('ceh');
+  if(/especifico.*puesto/.test(n))return F('cep');
+  if(/especifico/.test(n))return F('cedi');
+  if(/complemento de destino/.test(n))return F('cdest');
+  if(/productividad fija/.test(n))return F('cprod');
+  if(/lista espera/.test(n))return E('cupos');
+  if(/coyuntural/.test(n))return'coy';
+  if(/localizada/.test(n))return E('gloc');
+  if(/guardia/.test(n)&&/suces/.test(n)&&/sab|dom|fest/.test(n))return E('gfest4');
+  if(/guardia/.test(n)&&/suces/.test(n))return E('glab4');
+  if(/guardia/.test(n)&&/sab|dom|fest/.test(n))return E('gfest');
+  if(/guardias? laborab/.test(n))return E('glab');
+  if(/trasplante|transplante|extraccion/.test(n))return E('trasplante');
+  if(/actividad docente/.test(n))return E('curso');
+  return'?';
+}
+const ex=id=>S.cfg.extras.find(e=>e.id===id);
+function unitsFor(id,l,h){
+  const e=ex(id);if(!e)return 0;
+  if(e.importe)return r2((l.dev||0)-(l.ded||0));
+  if(id==='gloc'&&l.cant){for(let b=0;b<=31;b++){const a=(l.cant-24*b)/17;if(a>=-0.01&&Math.abs(a-Math.round(a))<0.02)return Math.round(a)+b}}
+  const hh=h||HOURS[id];
+  if(hh&&l.cant){const n=l.cant/hh;return Math.abs(n-Math.round(n))<0.02?Math.round(n):r2(n)}
+  if(+e.v>0&&l.dev){const n=l.dev/e.v;return Math.abs(n-Math.round(n))<0.05?Math.round(n):r2(n)}
+  return l.cant||1;
+}
+function splitCoy(l){
+  const H=l.cant||0,p=l.prec||(H?l.dev/H:0),out=[];
+  let sol=null;
+  if(H){for(let r=0;r<=40&&!sol;r++)for(let c=0;c<=40&&!sol;c++)for(let g=0;g<=40;g++){const s=17*r+7.03*c+10.88*g;if(s>H+0.02)break;if(Math.abs(s-H)<0.015){sol={r,c,g};break}}}
+  if(!sol)return[{to:ex('refuerzos')?'e:refuerzos':'?',n:H?r2(H/17):1,dev:l.dev,warn:true}];
+  [['refuerzos',sol.r,17],['procorta',sol.c,7.03],['prolarga',sol.g,10.88]].forEach(([id,n,h])=>{if(n)out.push({to:ex(id)?'e:'+id:'?',n,dev:r2(n*h*p)})});
+  if(out.length)out[out.length-1].dev=r2(l.dev-out.slice(0,-1).reduce((s,o)=>s+o.dev,0));
+  return out;
+}
+function classify(lines){
+  const items=[];
+  lines.forEach(l=>{
+    const n=norm(l.name);
+    const rule=(S.cfg.rules||[]).find(r=>r.p===n);
+    let to=rule?rule.to:builtin(n,l);
+    if(to==='coy'){splitCoy(l).forEach((s,j)=>items.push({l,name:l.name+(j?' (cont.)':''),key:n,auto:s.to,to:s.to,n:s.n,dev:s.dev,ded:0,coy:true,warn:s.warn}));return}
+    const it={l,name:l.name,key:n,auto:to,to,n:0,dev:l.dev||0,ded:l.ded||0,h:rule&&rule.h};
+    if(to.startsWith('e:'))it.n=unitsFor(to.slice(2),l,it.h);
+    items.push(it);
+  });
+  return items;
+}
+
+/* --- revisión --- */
+function optList(sel,isDed){
+  const o=(v,t)=>`<option value="${v}"${v===sel?' selected':''}>${esc(t)}</option>`;
+  return o('?','— Sin asignar —')+o('ign','Ignorar')
+   +`<optgroup label="Conceptos fijos">${S.cfg.fijos.map(f=>o('f:'+f.id,f.n)).join('')}</optgroup>`
+   +`<optgroup label="Extras">${S.cfg.extras.map(e=>o('e:'+e.id,e.n)).join('')}</optgroup>`
+   +`<optgroup label="Otros conceptos">${S.cfg.ajustes.map(a=>o('a:'+a.id,a.n)).join('')}</optgroup>`
+   +`<optgroup label="Deducciones">${o('irpf','Retención IRPF')+o('ss','Cuota del trabajador (Seg. Social)')}</optgroup>`;
+}
+function totals(){
+  const used=st.items.filter(i=>i.to!=='ign'),dev=r2(used.reduce((s,i)=>s+i.dev,0)),ded=r2(used.reduce((s,i)=>s+i.ded,0));
+  const irpf=r2(st.items.filter(i=>i.to==='irpf').reduce((s,i)=>s+i.ded,0)),ss=r2(st.items.filter(i=>i.to==='ss').reduce((s,i)=>s+i.ded,0));
+  const bruto=r2(st.items.filter(i=>/^[fea]:/.test(i.to)&&!(i.to==='f:aport')).reduce((s,i)=>s+i.dev-i.ded,0));
+  return{dev,ded,irpf,ss,bruto,ret:bruto?r2(irpf/bruto*100):null,neto:r2(dev-ded)};
+}
+function itemRow(it,i){
+  const isE=it.to.startsWith('e:'),e=isE&&ex(it.to.slice(2));
+  const amt=it.ded&&!it.dev?eur(-it.ded):eur(it.dev);
+  const unk=it.to==='?';
+  return`<div class="nirow${unk?' unk':''}${it.to==='ign'?' ign':''}">
+    <div class="nihead"><span class="k">${esc(it.name)}</span><span class="v mono">${amt}</span></div>
+    ${it.l.cant!=null?`<div class="small muted">${fmtIn(it.l.cant)}${it.l.prec!=null?' × '+fmtIn(it.l.prec):''}</div>`:''}
+    <div class="nictl"><select class="inp" data-ni="to" data-i="${i}" aria-label="Asignar ${esc(it.name)}">${optList(it.to)}</select>
+    ${isE?`<input class="inp num mono" data-ni="n" data-i="${i}" inputmode="decimal" value="${fmtIn(it.n)}" aria-label="${e&&e.importe?'Importe':'Número'}" style="width:96px" title="${e&&e.importe?'Importe (€)':'Número de unidades'}"><span class="small muted">${e&&e.importe?'€':'ud.'}</span>`:''}</div>
+    ${it.warn?'<div class="small" style="color:var(--neg,#b42318)">No se ha podido repartir las horas entre refuerzos y prolongaciones. Revísalo.</div>':''}
+  </div>`;
+}
+function draw(){
+  const t=totals();
+  const ok=(a,b)=>a==null||b==null?'':(Math.abs(a-b)<0.015?' <span style="color:var(--green)">✓</span>':` <span style="color:var(--neg,#b42318)">≠ ${eur(b)}</span>`);
+  const M=st.M,A=M?addM(M,-1):null;
+  const exists=M&&((S.recs[M]&&S.recs[M].real!=null)||(S.recs[A]&&S.recs[A].actConf));
+  const unk=st.items.filter(i=>i.to==='?').length;
+  const ord=['?','f:','e:','a:','irpf','ss','ign'];
+  const idx=st.items.map((it,i)=>i).sort((a,b)=>{const g=x=>ord.findIndex(p=>st.items[x].to.startsWith(p));return g(a)-g(b)||a-b});
+  openModal(`<div class="eyebrow">Leer nómina</div><h4>Revisa lo leído</h4>
+  <div class="field" style="margin-top:10px"><label for="niM">Nómina de</label><input class="inp" type="month" id="niM" value="${M||''}"></div>
+  ${M?`<p class="small muted" style="margin:6px 0 0">Las guardias y extras se registran como actividad de ${lab(A)}.</p>`:''}
+  ${exists?`<p class="small" style="margin:6px 0 0;color:var(--brass)">Ya hay datos de esta nómina: se sustituirán.</p>`:''}
+  ${unk?`<p class="small" style="margin:8px 0 0;color:var(--neg,#b42318)">${unk} concepto${unk>1?'s':''} sin asignar. Elige a qué corresponde${unk>1?'n':''} o márcalo${unk>1?'s':''} como «Ignorar».</p>`:''}
+  <div class="grp">Conceptos</div>
+  ${idx.map(i=>itemRow(st.items[i],i)).join('')}
+  <div class="grp">Comprobación</div>
+  <div class="kv"><span class="k">Devengos</span><span class="v">${eur(t.dev)}${ok(t.dev,st.p.totDev)}</span></div>
+  <div class="kv"><span class="k">Deducciones</span><span class="v">${eur(t.ded)}${ok(t.ded,st.p.totDed)}</span></div>
+  <div class="kv"><span class="k">Retención IRPF</span><span class="v">${t.ret!=null?fmtIn(t.ret)+' %':'—'}</span></div>
+  ${(st.p.totDev==null&&st.p.totDed==null)?'<p class="small muted">No se han podido leer los totales de la nómina para comprobarlos: revisa los importes.</p>':''}
+  <div class="field" style="margin-top:12px"><label for="niNeto">Cobrado real (neto)</label><input class="inp num mono" id="niNeto" inputmode="decimal" value="${fmtIn(st.netoEdit!=null?st.netoEdit:(st.p.neto!=null?st.p.neto:t.neto))}" style="font-size:20px"></div>
+  ${st.p.neto!=null&&Math.abs(st.p.neto-t.neto)>0.015?`<p class="small" style="color:var(--neg,#b42318)">El neto leído (${eur(st.p.neto)}) no coincide con devengos − deducciones (${eur(t.neto)}). Revisa los importes.</p>`:''}
+  <label class="switch small" style="margin-top:14px"><span>Actualizar mis tarifas con los importes de esta nómina</span><input type="checkbox" id="niUpd"${st.upd?' checked':''}></label>
+  <label class="switch small" style="margin-top:10px"><span>Recordar mis asignaciones para próximas nóminas</span><input type="checkbox" id="niLearn"${st.learn?' checked':''}></label>
+  <div class="foot"><button class="btn" data-act="close">Cancelar</button><button class="btn primary" id="niOk">Guardar</button></div>`);
+  const sheet=M_EL.querySelector('.sheet');if(sheet&&st.scroll)sheet.scrollTop=st.scroll;
+  M_EL.querySelector('#niM').onchange=e=>{st.M=/^\d{4}-\d{2}$/.test(e.target.value)?e.target.value:null;redraw()};
+  M_EL.querySelector('#niNeto').oninput=e=>{st.netoEdit=num(e.target.value)};
+  M_EL.querySelector('#niUpd').onchange=e=>{st.upd=e.target.checked};
+  M_EL.querySelector('#niLearn').onchange=e=>{st.learn=e.target.checked};
+  M_EL.querySelectorAll('[data-ni="to"]').forEach(s=>s.onchange=()=>{const it=st.items[+s.dataset.i];it.to=s.value;if(it.to.startsWith('e:')){it.n=unitsFor(it.to.slice(2),it.l,null)}redraw()});
+  M_EL.querySelectorAll('[data-ni="n"]').forEach(s=>s.oninput=()=>{st.items[+s.dataset.i].n=num(s.value)});
+  M_EL.querySelector('#niOk').onclick=save;
+}
+function redraw(){const sh=M_EL.querySelector('.sheet');st.scroll=sh?sh.scrollTop:0;draw()}
+
+/* --- guardar --- */
+function save(){
+  const M=st.M;
+  if(!M){toast('Elige el mes de la nómina.');return}
+  const unk=st.items.filter(i=>i.to==='?').length;
+  if(unk){toast('Hay conceptos sin asignar. Asígnalos o márcalos como «Ignorar».');return}
+  const t=totals(),A=addM(M,-1);
+  const neto=st.netoEdit!=null?st.netoEdit:(st.p.neto!=null?st.p.neto:t.neto);
+  // valores de esta nómina
+  const fv={},ev={},eamt={},aj={};
+  st.items.forEach(it=>{
+    if(it.to.startsWith('f:')){const id=it.to.slice(2);fv[id]=r2((fv[id]||0)+it.dev-it.ded)}
+    else if(it.to.startsWith('e:')){const id=it.to.slice(2);ev[id]=r2((ev[id]||0)+(+it.n||0));eamt[id]=r2((eamt[id]||0)+it.dev-it.ded)}
+    else if(it.to.startsWith('a:')){const id=it.to.slice(2);aj[id]=r2((aj[id]||0)+it.dev-it.ded)}
+  });
+  const fijos=clone(S.cfg.fijos).map(f=>{if(fv[f.id]!=null)f.v=fv[f.id];if(f.id==='aport'&&t.ss)f.v=-t.ss;return f});
+  const ret=t.ret!=null?t.ret:S.cfg.ret;
+  const prices=clone(S.cfg.extras).map(e=>{if(!e.importe&&ev[e.id]>0&&eamt[e.id]>0)e.v=r2(eamt[e.id]/ev[e.id]);return e});
+  // registros
+  const ra=rec(A);ra.act={};Object.keys(ev).forEach(id=>{if(+ev[id])ra.act[id]=ev[id]});ra.preciosAct=prices;ra.actConf=true;ra.ts=Date.now();
+  const rm=rec(M);rm.real=r2(neto);rm.fijosSnap=fijos;rm.retSnap=ret;
+  if(Object.keys(aj).length)rm.aj=aj;else delete rm.aj;
+  // tarifas
+  let cfgCh=false;
+  if(st.upd){S.cfg.fijos=clone(fijos);S.cfg.ret=ret;S.cfg.extras=clone(prices);cfgCh=true}
+  if(st.learn){
+    const rules=(S.cfg.rules||[]).slice();
+    st.items.forEach(it=>{
+      if(it.coy||it.to===it.auto)return;
+      const r={p:it.key,to:it.to,n:it.name};
+      if(it.to.startsWith('e:')&&it.l.cant&&+it.n>0){const e=ex(it.to.slice(2));if(e&&!e.importe)r.h=r2(it.l.cant/it.n)}
+      const k=rules.findIndex(x=>x.p===r.p);if(k>=0)rules[k]=r;else rules.push(r);cfgCh=true;
+    });
+    S.cfg.rules=rules;
+  }
+  closeModal();
+  saveRec(A);saveRec(M);if(cfgCh){saveCfg();if(!S.dirty)S.draft=null}
+  render();toast('Nómina de '+lab(M)+' guardada.');
+  st=null;
+}
+
+/* --- entrada --- */
+async function run(file){
+  st={upd:true,learn:true,scroll:0,netoEdit:null};
+  openModal(`<div class="eyebrow">Leer nómina</div><h4>Leyendo…</h4><p class="muted small" id="niSt">Preparando…</p><p class="small muted">La nómina se lee en este dispositivo y no se envía a ningún sitio.</p><div class="foot"><button class="btn" data-act="close">Cancelar</button></div>`);
+  try{
+    const isPdf=file.type==='application/pdf'||/\.pdf$/i.test(file.name);
+    const toks=isPdf?await fromPDF(file):await fromImage(file);
+    if(!M_EL.querySelector('#niSt'))return; // cancelado
+    const p=parse(toks);
+    if(!p.lines.length)throw new Error('No se han encontrado conceptos en la nómina. Prueba con una captura más nítida o con el PDF.');
+    st.p=p;st.M=p.M;st.items=classify(p.lines);
+    draw();
+  }catch(e){
+    if(!M_EL.querySelector('#niSt'))return;
+    openModal(`<div class="eyebrow">Leer nómina</div><h4>No se ha podido leer</h4><p class="muted">${esc(e&&e.message&&!/^(img|net)$/.test(e.message)?e.message:'Revisa que el archivo sea una captura o un PDF de la nómina.')}</p><div class="foot"><button class="btn primary" data-act="close">Cerrar</button></div>`);
+  }
+}
+function pick(){document.getElementById('nomFile').click()}
+document.getElementById('nomFile').addEventListener('change',e=>{const f=e.target.files[0];e.target.value='';if(f)run(f)});
+function rulesBlock(){
+  const rs=S.cfg.rules||[];if(!rs.length)return'';
+  const tn=to=>{const[g,id]=to.includes(':')?to.split(':'):[to,''];if(g==='f')return(S.cfg.fijos.find(x=>x.id===id)||{}).n||id;if(g==='e')return(ex(id)||{}).n||id;if(g==='a')return(S.cfg.ajustes.find(x=>x.id===id)||{}).n||id;return{ign:'Ignorar',irpf:'Retención IRPF',ss:'Cuota del trabajador'}[to]||to};
+  return`<h3 class="sec">Conceptos aprendidos de la nómina</h3><div class="card"><p class="small muted" style="margin:0 0 6px">Asignaciones que hiciste al leer una nómina. Se aplican automáticamente en las siguientes.</p>
+  ${rs.map((r,i)=>`<div class="kv"><span class="k">${esc(r.n||r.p)} → ${esc(tn(r.to))}${r.h?` <span class="small muted">(${fmtIn(r.h)} h/ud.)</span>`:''}</span><button class="x" data-act="ruledel" data-i="${i}" aria-label="Olvidar ${esc(r.n||r.p)}">×</button></div>`).join('')}</div>`;
+}
+function ruleDel(i){const rs=(S.cfg.rules||[]).slice();rs.splice(i,1);S.cfg.rules=rs;if(S.draft)S.draft.rules=clone(rs);saveCfg();render()}
+return{pick,run,rulesBlock,ruleDel,_parse:parse,_classify:classify};
+})();
 function persist(key,data){
   if(S.mode!=='db'){SY.mark(key);saveLocal();SY.soon();return Promise.resolve()}
   const ref=S.col.doc(key);
@@ -456,6 +752,7 @@ function vResumen(){
     <div class="kv"><span class="k">Cobrado</span><span class="v">${p.real!=null?eur(p.real):'—'}</span></div>
     ${p.real!=null?`<div class="kv"><span class="k">Diferencia</span><span class="v">${difHTML(p.dif)}</span></div>`:''}
     <div class="btns"><button class="btn primary" data-act="real" data-m="${prevM}">${p.real!=null?'Corregir lo cobrado':'Anotar lo cobrado'}</button><button class="btn" data-act="det" data-m="${prevM}">Desglose</button></div>
+    <div class="btns" style="margin-top:8px"><button class="btn" data-act="leer">Leer nómina (captura o PDF)</button></div>
   </div>`;
   const hist=[];for(let i=2;i<14&&hist.length<4;i++){const M=addM(heroM,-i);if(hasData(M))hist.push(calc(M))}
   html+=`<h3 class="sec">Historial reciente</h3><div class="card list">${hist.length?hist.map(rowHTML).join(''):'<div class="empty">Aquí aparecerán las nóminas anteriores a medida que registres actividad y anotes lo cobrado.</div>'}</div>`;
@@ -563,6 +860,7 @@ function vAjustes(){
   <h3 class="sec">Conceptos fijos mensuales</h3><div class="card">${fijos}<div class="btns"><button class="btn link" data-act="add" data-g="fijos">Añadir concepto fijo</button></div></div>
   <h3 class="sec">Extras · precio por unidad</h3><div class="card">${extras}<div class="btns"><button class="btn link" data-act="add" data-g="extras">Añadir extra por unidad</button></div></div>
   <h3 class="sec">Otros conceptos variables</h3><div class="card"><p class="small muted" style="margin:0">Se piden en el asistente y se aplican a la nómina del mes siguiente (paga extra, huelga…).</p>${ajs}<div class="btns"><button class="btn link" data-act="add" data-g="ajustes">Añadir concepto variable</button></div></div>
+  ${NI.rulesBlock()}
   <p class="small muted">Bruto: se le aplica la retención. Neto: se suma tal cual. Los cambios afectan a los meses no cerrados; los meses ya registrados conservan sus tarifas, salvo que pulses «Aplicar tarifas actuales» en su desglose.</p>
   <div class="btns"><button class="btn danger" data-act="reset">Restablecer tarifas de la nómina original</button></div>
   <p class="small muted">${S.mode==='db'?'Los datos se guardan en tu cuenta y se sincronizan entre dispositivos.':'Los datos se guardan solo en este navegador.'}</p>
@@ -752,6 +1050,8 @@ document.addEventListener('click',async e=>{
   else if(a==='csv')csv();
   else if(a==='json')backup();
   else if(a==='import')document.getElementById('importFile').click();
+  else if(a==='leer')NI.pick();
+  else if(a==='ruledel')NI.ruleDel(+b.dataset.i);
   else if(a==='syncsetup')SY.setup();
   else if(a==='syncnow')SY.now(true);
   else if(a==='syncoff')SY.off();
