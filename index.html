@@ -148,6 +148,15 @@ td:first-child{font-family:var(--body);text-transform:capitalize}
 .nirow.unk{background:color-mix(in srgb,var(--brass) 10%,transparent);margin:0 -8px;padding:10px 8px;border-radius:6px}
 .nirow.ign .kv .x{border:1px solid var(--line);background:var(--surface);border-radius:5px;width:32px;height:30px;color:var(--neg);font-size:16px;flex:none}
 .nihead{opacity:.55}
+.cmpsum{border-radius:8px;padding:12px;margin:14px 0 4px;display:flex;flex-direction:column;gap:4px}
+.cmpsum.bad{background:color-mix(in srgb,var(--neg,#b42318) 10%,transparent);color:var(--neg,#b42318)}
+.cmpsum.ok{background:color-mix(in srgb,var(--green) 12%,transparent);color:var(--green)}
+.cmpsum .mono{font-size:20px}
+.kv.cmp{align-items:flex-start}
+.kv.cmp.bad .v{color:var(--neg,#b42318)}
+.kv.cmp.more .v{color:var(--brass)}
+.cmpok{margin-top:12px}
+.cmpok summary{cursor:pointer;font-size:13px;color:var(--muted);padding:6px 0}
 .nihead{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
 .nihead .k{font-size:14px}
 .nictl{display:flex;gap:6px;align-items:center;margin-top:6px}
@@ -393,7 +402,7 @@ function pnum(t){t=clean(t);const neg=t.startsWith('-');t=t.replace(/^-/,'');con
 const r2=v=>Math.round(v*100)/100;
 let st=null; // estado de la revisión
 let queue=[],qi=0,qn=0,hint=null,saved=0;
-const eyebrow=()=>'Leer nómina'+(qn>1?' · '+qi+' de '+qn:'');
+const eyebrow=()=>'Comprobar nómina'+(qn>1?' · '+qi+' de '+qn:'');
 const newer=M=>!!M&&Object.keys(S.recs).some(k=>k>M&&S.recs[k]&&S.recs[k].real!=null);
 
 function status(msg){const el=document.getElementById('niSt');if(el)el.textContent=msg}
@@ -507,22 +516,34 @@ function builtin(n,l){
   return'?';
 }
 const ex=id=>S.cfg.extras.find(e=>e.id===id);
+// horas posibles de una línea: la cantidad leída y, como comprobación, importe ÷ precio
+function hoursOf(l){const c=[];if(l.cant>0)c.push(l.cant);if(l.prec>0&&l.dev>0){const h=r2(l.dev/l.prec);if(!c.some(x=>Math.abs(x-h)<0.01))c.push(h)}return c}
 function unitsFor(id,l,h){
   const e=ex(id);if(!e)return 0;
   if(e.importe)return r2((l.dev||0)-(l.ded||0));
-  if(id==='gloc'&&l.cant){for(let b=0;b<=31;b++){const a=(l.cant-24*b)/17;if(a>=-0.01&&Math.abs(a-Math.round(a))<0.02)return Math.round(a)+b}}
+  const Hs=hoursOf(l);
+  if(id==='gloc'&&!h){for(const H of Hs)for(let b=0;b<=31;b++){const a=(H-24*b)/17;if(a>=-0.01&&Math.abs(a-Math.round(a))<0.02)return Math.round(a)+b}}
   const hh=h||HOURS[id];
-  if(hh&&l.cant){const n=l.cant/hh;return Math.abs(n-Math.round(n))<0.02?Math.round(n):r2(n)}
+  if(hh&&Hs.length){for(const H of Hs){const n=H/hh;if(Math.abs(n-Math.round(n))<0.02)return Math.round(n)}return r2(Hs[0]/hh)}
   if(+e.v>0&&l.dev){const n=l.dev/e.v;return Math.abs(n-Math.round(n))<0.05?Math.round(n):r2(n)}
   return l.cant||1;
 }
+// coyunturales: refuerzos (17 h), prolongación corta (7,03 h) y larga (10,88 h) van en la misma línea
+function decomp(H){let best=null;
+  for(let r=0;r*17<=H+0.5;r++)for(let c=0;17*r+7.03*c<=H+0.5;c++)for(let g=0;;g++){const s=17*r+7.03*c+10.88*g;if(s>H+0.5)break;const d=Math.abs(s-H);if(!best||d<best.d-1e-9||(Math.abs(d-best.d)<1e-9&&c+g<best.c+best.g))best={r,c,g,d,s}}
+  return best}
 function splitCoy(l){
-  const H=l.cant||0,p=l.prec||(H?l.dev/H:0),out=[];
-  let sol=null;
-  if(H){for(let r=0;r<=40&&!sol;r++)for(let c=0;c<=40&&!sol;c++)for(let g=0;g<=40;g++){const s=17*r+7.03*c+10.88*g;if(s>H+0.02)break;if(Math.abs(s-H)<0.015){sol={r,c,g};break}}}
-  if(!sol)return[{to:ex('refuerzos')?'e:refuerzos':'?',n:H?r2(H/17):1,dev:l.dev,warn:true}];
-  [['refuerzos',sol.r,17],['procorta',sol.c,7.03],['prolarga',sol.g,10.88]].forEach(([id,n,h])=>{if(n)out.push({to:ex(id)?'e:'+id:'?',n,dev:r2(n*h*p)})});
+  const Hs=hoursOf(l),out=[];
+  let sol=null,H=0;
+  for(const h of Hs){const d=decomp(h);if(d&&d.d<0.02){sol=d;H=h;break}}
+  let warn=false;
+  if(!sol){for(const h of Hs){const d=decomp(h);if(d&&(!sol||d.d<sol.d)){sol=d;H=h}}if(sol&&sol.d>0.3)sol=null;warn=true}
+  if(!sol){const h=Hs[0]||0;return[{to:ex('refuerzos')?'e:refuerzos':'?',n:h?r2(h/17):1,dev:l.dev,warn:true,info:h?fmtIn(h)+' h leídas':''}]}
+  const p=l.dev&&sol.s?l.dev/sol.s:(l.prec||0);
+  [['refuerzos',sol.r,17,'refuerzo','refuerzos'],['procorta',sol.c,7.03,'prolongación corta','prolongaciones cortas'],['prolarga',sol.g,10.88,'prolongación larga','prolongaciones largas']].forEach(([id,n,h,s1,s2])=>{if(n)out.push({to:ex(id)?'e:'+id:'?',n,dev:r2(n*h*p),txt:n+' '+(n>1?s2:s1)})});
   if(out.length)out[out.length-1].dev=r2(l.dev-out.slice(0,-1).reduce((s,o)=>s+o.dev,0));
+  const info=fmtIn(H)+' h = '+out.map(o=>o.txt).join(' + ');
+  out.forEach(o=>{o.info=info;o.warn=warn});
   return out;
 }
 function classify(lines){
@@ -531,7 +552,7 @@ function classify(lines){
     const n=norm(l.name);
     const rule=(S.cfg.rules||[]).find(r=>r.p===n);
     let to=rule?rule.to:builtin(n,l);
-    if(to==='coy'){splitCoy(l).forEach((s,j)=>items.push({l,name:l.name+(j?' (cont.)':''),key:n,auto:s.to,to:s.to,n:s.n,dev:s.dev,ded:0,coy:true,warn:s.warn}));return}
+    if(to==='coy'){splitCoy(l).forEach((s,j)=>items.push({l,name:l.name+(j?' (cont.)':''),key:n,auto:s.to,to:s.to,n:s.n,dev:s.dev,ded:0,coy:true,warn:s.warn,info:s.info}));return}
     const it={l,name:l.name,key:n,auto:to,to,n:0,dev:l.dev||0,ded:l.ded||0,h:rule&&rule.h};
     if(to.startsWith('e:'))it.n=unitsFor(to.slice(2),l,it.h);
     items.push(it);
@@ -563,90 +584,118 @@ function itemRow(it,i){
     ${it.l.cant!=null?`<div class="small muted">${fmtIn(it.l.cant)}${it.l.prec!=null?' × '+fmtIn(it.l.prec):''}</div>`:''}
     <div class="nictl"><select class="inp" data-ni="to" data-i="${i}" aria-label="Asignar ${esc(it.name)}">${optList(it.to)}</select>
     ${isE?`<input class="inp num mono" data-ni="n" data-i="${i}" inputmode="decimal" value="${fmtIn(it.n)}" aria-label="${e&&e.importe?'Importe':'Número'}" style="width:96px" title="${e&&e.importe?'Importe (€)':'Número de unidades'}"><span class="small muted">${e&&e.importe?'€':'ud.'}</span>`:''}</div>
-    ${it.warn?'<div class="small" style="color:var(--neg,#b42318)">No se ha podido repartir las horas entre refuerzos y prolongaciones. Revísalo.</div>':''}
+    ${it.info&&it.name.indexOf('(cont.)')<0?`<div class="small muted">${esc(it.info)}</div>`:''}
+    ${it.warn?'<div class="small" style="color:var(--neg,#b42318)">Las horas leídas no cuadran exactamente con refuerzos (17 h) y prolongaciones (7,03 h y 10,88 h). Comprueba la cantidad en la nómina y corrige el número si hace falta.</div>':''}
   </div>`;
 }
 function draw(){
-  const t=totals();
-  const ok=(a,b)=>a==null||b==null?'':(Math.abs(a-b)<0.015?' <span style="color:var(--green)">✓</span>':` <span style="color:var(--neg,#b42318)">≠ ${eur(b)}</span>`);
-  const M=st.M,A=M?addM(M,-1):null;
-  const exists=M&&((S.recs[M]&&S.recs[M].real!=null)||(S.recs[A]&&S.recs[A].actConf));
-  const unk=st.items.filter(i=>i.to==='?').length;
-  const ord=['?','f:','e:','a:','irpf','ss','ign'];
-  const idx=st.items.map((it,i)=>i).sort((a,b)=>{const g=x=>ord.findIndex(p=>st.items[x].to.startsWith(p));return g(a)-g(b)||a-b});
-  if(!st.updTouched)st.upd=!newer(M);
-  openModal(`<div class="eyebrow">${eyebrow()}</div><h4>Revisa lo leído</h4>
+  const M=st.M,c=M?compare():null;
+  const unk=st.items.map((it,i)=>i).filter(i=>st.items[i].to==='?');
+  const warn=st.items.some(i=>i.warn);
+  const li=(x,cls)=>`<div class="kv cmp ${cls}"><span class="k">${esc(x.k)}<span class="small muted" style="display:block">${esc(x.t)}</span></span>${x.d!=null?`<span class="v mono">${eur(x.d,true)}</span>`:''}</div>`;
+  const rm=M?(S.recs[M]||{}):{};
+  let body='';
+  if(!M){body='<p class="small" style="color:var(--neg,#b42318)">No se ha podido leer el mes de la nómina. Elígelo arriba.</p>'}
+  else{
+    const o=c.out,falt=r2(o.bad.reduce((s,x)=>s+(x.d<0?x.d:0),0));
+    body+=o.bad.length
+      ?`<div class="cmpsum bad"><b>${o.bad.length} diferencia${o.bad.length>1?'s':''} a tu favor sin cobrar</b>${falt?`<span class="mono">${eur(falt)}</span>`:''}<span class="small">Importes brutos aproximados, antes de retenciones.</span></div>`
+      :`<div class="cmpsum ok"><b>Todo lo que tienes registrado aparece pagado.</b></div>`;
+    if(o.bad.length)body+=`<div class="grp">Falta o pagado de menos</div>${o.bad.map(x=>li(x,'bad')).join('')}`;
+    if(o.more.length)body+=`<div class="grp">Pagado de más o no registrado</div>${o.more.map(x=>li(x,'more')).join('')}<p class="small muted">Puede corresponder a otro mes o a algo que no registraste.</p>`;
+    if(o.info.length)body+=`<div class="grp">Para revisar</div>${o.info.map(x=>li(x,'info')).join('')}`;
+    body+=`<div class="grp">Neto</div>
+      <div class="kv"><span class="k">Estimado por la app</span><span class="v mono">${eur(c.est)}</span></div>
+      <div class="kv"><span class="k">Neto de la nómina</span><span class="v mono">${eur(c.netoPaid)}</span></div>
+      <div class="kv"><span class="k">Diferencia</span><span class="v mono">${eur(c.netoPaid-c.est,true)}</span></div>
+      ${c.retApp!=null&&c.retNom!=null&&Math.abs(c.retApp-c.retNom)>=0.01?`<p class="small muted">Retención IRPF de la nómina: ${fmtIn(c.retNom)} % (en la app: ${fmtIn(c.retApp)} %).</p>`:''}`;
+    if(o.ok.length)body+=`<details class="cmpok"><summary>Coincide (${o.ok.length})</summary>${o.ok.map(x=>li(x,'ok')).join('')}</details>`;
+  }
+  openModal(`<div class="eyebrow">${eyebrow()}</div><h4>Resultado</h4>
   <div class="field" style="margin-top:10px"><label for="niM">Nómina de</label><input class="inp" type="month" id="niM" value="${M||''}"></div>
-  ${M?`<p class="small muted" style="margin:6px 0 0">Las guardias y extras se registran como actividad de ${lab(A)}.</p>`:''}
-  ${exists?`<p class="small" style="margin:6px 0 0;color:var(--brass)">Ya hay datos de esta nómina: se sustituirán.</p>`:''}
-  ${unk?`<p class="small" style="margin:8px 0 0;color:var(--neg,#b42318)">${unk} concepto${unk>1?'s':''} sin asignar. Elige a qué corresponde${unk>1?'n':''} o márcalo${unk>1?'s':''} como «Ignorar».</p>`:''}
-  <div class="grp">Conceptos</div>
-  ${idx.map(i=>itemRow(st.items[i],i)).join('')}
-  <div class="grp">Comprobación</div>
-  <div class="kv"><span class="k">Devengos</span><span class="v">${eur(t.dev)}${ok(t.dev,st.p.totDev)}</span></div>
-  <div class="kv"><span class="k">Deducciones</span><span class="v">${eur(t.ded)}${ok(t.ded,st.p.totDed)}</span></div>
-  <div class="kv"><span class="k">Retención IRPF</span><span class="v">${t.ret!=null?fmtIn(t.ret)+' %':'—'}</span></div>
-  ${(st.p.totDev==null&&st.p.totDed==null)?'<p class="small muted">No se han podido leer los totales de la nómina para comprobarlos: revisa los importes.</p>':''}
-  <div class="field" style="margin-top:12px"><label for="niNeto">Cobrado real (neto)</label><input class="inp num mono" id="niNeto" inputmode="decimal" value="${fmtIn(st.netoEdit!=null?st.netoEdit:(st.p.neto!=null?st.p.neto:t.neto))}" style="font-size:20px"></div>
-  ${st.p.neto!=null&&Math.abs(st.p.neto-t.neto)>0.015?`<p class="small" style="color:var(--neg,#b42318)">El neto leído (${eur(st.p.neto)}) no coincide con devengos − deducciones (${eur(t.neto)}). Revisa los importes.</p>`:''}
-  <label class="switch small" style="margin-top:14px"><span>Actualizar mis tarifas con los importes de esta nómina</span><input type="checkbox" id="niUpd"${st.upd?' checked':''}></label>
-  ${newer(M)?'<p class="small muted" style="margin:4px 0 0">Ya tienes nóminas más recientes registradas, así que por defecto no se cambian tus tarifas actuales.</p>':''}
-  <label class="switch small" style="margin-top:10px"><span>Recordar mis asignaciones para próximas nóminas</span><input type="checkbox" id="niLearn"${st.learn?' checked':''}></label>
-  <div class="foot"><button class="btn" id="niCancel">${qi<qn?'Cancelar todo':'Cancelar'}</button>${qi<qn?'<button class="btn" id="niSkip">Saltar</button>':''}<button class="btn primary" id="niOk">${qi<qn?'Guardar y seguir':'Guardar'}</button></div>`);
+  ${M?`<p class="small muted" style="margin:6px 0 0">Se compara con tus tarifas y con la actividad que registraste en ${lab(addM(M,-1))}. No se modifica nada de lo que tienes guardado.</p>`:''}
+  ${unk.length?`<div class="grp">No reconocidos</div><p class="small" style="margin:0 0 4px;color:var(--neg,#b42318)">Asígnalos para poder compararlos, o márcalos como «Ignorar».</p>${unk.map(i=>itemRow(st.items[i],i)).join('')}`:''}
+  ${warn?'<p class="small" style="margin:8px 0 0;color:var(--neg,#b42318)">Hay horas que no cuadran con refuerzos y prolongaciones: revísalas en «Conceptos leídos».</p>':''}
+  ${body}
+  <details class="cmpok"${st.openAll?' open':''} id="niAll"><summary>Conceptos leídos (${st.items.length})</summary>${st.items.map((it,i)=>itemRow(it,i)).join('')}</details>
+  <label class="switch small" style="margin-top:12px"><span>Recordar mis asignaciones para próximas nóminas</span><input type="checkbox" id="niLearn"${st.learn?' checked':''}></label>
+  ${M&&c&&Math.abs((rm.real??NaN)-c.netoPaid)>0.005||M&&c&&rm.real==null?`<div class="btns"><button class="btn" id="niReal">Anotar ${eur(c.netoPaid)} como cobrado</button></div>`:''}
+  <div class="foot">${qi<qn?'<button class="btn" id="niCancel">Cancelar todo</button><button class="btn primary" id="niNext">Siguiente</button>':'<button class="btn primary" id="niCancel">Cerrar</button>'}</div>`);
   const sheet=M_EL.querySelector('.sheet');if(sheet&&st.scroll)sheet.scrollTop=st.scroll;
   M_EL.querySelector('#niM').onchange=e=>{st.M=/^\d{4}-\d{2}$/.test(e.target.value)?e.target.value:null;redraw()};
-  M_EL.querySelector('#niNeto').oninput=e=>{st.netoEdit=num(e.target.value)};
-  M_EL.querySelector('#niUpd').onchange=e=>{st.upd=e.target.checked;st.updTouched=true};
-  M_EL.querySelector('#niCancel').onclick=()=>{queue=[];closeModal();st=null;if(saved)toast(saved+' nómina'+(saved>1?'s guardadas.':' guardada.'))};
-  const sk=M_EL.querySelector('#niSkip');if(sk)sk.onclick=()=>next();
   M_EL.querySelector('#niLearn').onchange=e=>{st.learn=e.target.checked};
-  M_EL.querySelectorAll('[data-ni="to"]').forEach(s=>s.onchange=()=>{const it=st.items[+s.dataset.i];it.to=s.value;if(it.to.startsWith('e:')){it.n=unitsFor(it.to.slice(2),it.l,null)}redraw()});
-  M_EL.querySelectorAll('[data-ni="n"]').forEach(s=>s.oninput=()=>{st.items[+s.dataset.i].n=num(s.value)});
-  M_EL.querySelector('#niOk').onclick=save;
+  M_EL.querySelector('#niAll').ontoggle=e=>{st.openAll=e.target.open};
+  M_EL.querySelectorAll('[data-ni="to"]').forEach(s=>s.onchange=()=>{const it=st.items[+s.dataset.i];it.to=s.value;if(it.to.startsWith('e:'))it.n=unitsFor(it.to.slice(2),it.l,null);redraw()});
+  M_EL.querySelectorAll('[data-ni="n"]').forEach(s=>s.onchange=()=>{st.items[+s.dataset.i].n=num(s.value);redraw()});
+  M_EL.querySelector('#niCancel').onclick=()=>{learnRules();queue=[];closeModal();st=null};
+  const nx=M_EL.querySelector('#niNext');if(nx)nx.onclick=()=>{learnRules();next()};
+  const rb=M_EL.querySelector('#niReal');if(rb)rb.onclick=()=>{const r=rec(M);r.real=r2(c.netoPaid);saveRec(M);render();toast('Anotado como cobrado: '+eur(c.netoPaid));redraw()};
 }
 function redraw(){const sh=M_EL.querySelector('.sheet');st.scroll=sh?sh.scrollTop:0;draw()}
 
-/* --- guardar --- */
-function save(){
-  const M=st.M;
-  if(!M){toast('Elige el mes de la nómina.');return}
-  const unk=st.items.filter(i=>i.to==='?').length;
-  if(unk){toast('Hay conceptos sin asignar. Asígnalos o márcalos como «Ignorar».');return}
-  const t=totals(),A=addM(M,-1);
-  const neto=st.netoEdit!=null?st.netoEdit:(st.p.neto!=null?st.p.neto:t.neto);
-  // valores de esta nómina
-  const fv={},ev={},eamt={},aj={};
-  st.items.forEach(it=>{
-    if(it.to.startsWith('f:')){const id=it.to.slice(2);fv[id]=r2((fv[id]||0)+it.dev-it.ded)}
-    else if(it.to.startsWith('e:')){const id=it.to.slice(2);ev[id]=r2((ev[id]||0)+(+it.n||0));eamt[id]=r2((eamt[id]||0)+it.dev-it.ded)}
-    else if(it.to.startsWith('a:')){const id=it.to.slice(2);aj[id]=r2((aj[id]||0)+it.dev-it.ded)}
+/* --- comparación con lo registrado --- */
+function compare(){
+  const t=totals(),M=st.M,A=addM(M,-1),ra=S.recs[A]||{},rm=S.recs[M]||{};
+  const closed=rm.real!=null&&!!rm.fijosSnap;
+  const fijos=closed?rm.fijosSnap:S.cfg.fijos;
+  const prices=(ra.actConf&&ra.preciosAct)?ra.preciosAct:S.cfg.extras;
+  const regAct=ra.act||{},hasAct=!!ra.actConf||Object.values(regAct).some(v=>+v);
+  const o={bad:[],more:[],ok:[],info:[]};
+  const pf={},pe={},pea={},pa={};
+  st.items.forEach(it=>{const id=it.to.slice(2),v=it.dev-it.ded;
+    if(it.to.startsWith('f:'))pf[id]=r2((pf[id]||0)+v);
+    else if(it.to.startsWith('e:')){pe[id]=r2((pe[id]||0)+(+it.n||0));pea[id]=r2((pea[id]||0)+v)}
+    else if(it.to.startsWith('a:'))pa[id]=r2((pa[id]||0)+v)});
+  const hasSS=st.items.some(i=>i.to==='ss');
+  // conceptos fijos
+  fijos.forEach(f=>{
+    const exp=+f.v||0;
+    const paid=f.id==='aport'?(hasSS?-t.ss:null):(pf[f.id]!=null?pf[f.id]:null);
+    if(paid==null){if(exp>0)o.bad.push({k:f.n,t:'No aparece en la nómina (esperado '+eur(exp)+')',d:-exp});return}
+    const d=r2(paid-exp);
+    if(Math.abs(d)<0.015)o.ok.push({k:f.n,t:eur(paid)});
+    else if(!exp)o.info.push({k:f.n,t:'En tus tarifas está a 0 y la nómina trae '+eur(paid)+'.'});
+    else if(f.id==='aport')(d<0?o.bad:o.more).push({k:f.n+' (cuotas del trabajador)',t:'Esperado '+eur(exp)+' · nómina '+eur(paid),d});
+    else(d<0?o.bad:o.more).push({k:f.n,t:'Esperado '+eur(exp)+' · nómina '+eur(paid),d});
   });
-  const fijos=clone(S.cfg.fijos).map(f=>{if(fv[f.id]!=null)f.v=fv[f.id];if(f.id==='aport'&&t.ss)f.v=-t.ss;return f});
-  const ret=t.ret!=null?t.ret:S.cfg.ret;
-  const prices=clone(S.cfg.extras).map(e=>{if(!e.importe&&ev[e.id]>0&&eamt[e.id]>0)e.v=r2(eamt[e.id]/ev[e.id]);return e});
-  // registros
-  const ra=rec(A);ra.act={};Object.keys(ev).forEach(id=>{if(+ev[id])ra.act[id]=ev[id]});ra.preciosAct=prices;ra.actConf=true;ra.ts=Date.now();
-  const rm=rec(M);rm.real=r2(neto);rm.fijosSnap=fijos;rm.retSnap=ret;
-  if(Object.keys(aj).length)rm.aj=aj;else delete rm.aj;
-  // tarifas
-  let cfgCh=false;
-  if(st.upd){S.cfg.fijos=clone(fijos);S.cfg.ret=ret;S.cfg.extras=clone(prices);cfgCh=true}
-  if(st.learn){
-    const rules=(S.cfg.rules||[]).slice();
-    st.items.forEach(it=>{
-      if(it.coy||it.to===it.auto)return;
-      const r={p:it.key,to:it.to,n:it.name};
-      if(it.to.startsWith('e:')&&it.l.cant&&+it.n>0){const e=ex(it.to.slice(2));if(e&&!e.importe)r.h=r2(it.l.cant/it.n)}
-      const k=rules.findIndex(x=>x.p===r.p);if(k>=0)rules[k]=r;else rules.push(r);cfgCh=true;
-    });
-    S.cfg.rules=rules;
-  }
-  closeModal();
-  saveRec(A);saveRec(M);if(cfgCh){saveCfg();if(!S.dirty)S.draft=null}
-  render();saved++;st=null;
-  if(qi<queue.length)next();else{toast(qn>1?saved+' de '+qn+' nóminas guardadas.':'Nómina de '+lab(M)+' guardada.');queue=[]}
+  // guardias y extras
+  const pr=id=>prices.find(e=>e.id===id)||ex(id)||{n:id,v:0};
+  const u=(n,e)=>e.importe?eur(n):(fmtIn(n)+' ud.');
+  if(!hasAct)o.info.push({k:'Actividad de '+lab(A),t:'No la tienes registrada: no se pueden comparar las guardias y extras.'});
+  const ids=[...new Set([...Object.keys(regAct).filter(k=>+regAct[k]),...Object.keys(pe)])];
+  ids.forEach(id=>{
+    const e=pr(id),reg=+regAct[id]||0,paid=e.importe?(pea[id]||0):(pe[id]||0),price=+e.v||(pe[id]>0?r2(pea[id]/pe[id]):0);
+    if(!hasAct){if(paid)o.info.push({k:e.n,t:'Pagado: '+u(paid,e)});return}
+    const d=r2(paid-reg);
+    if(Math.abs(d)<0.01){
+      if(!e.importe&&paid>0&&price>0){const pp=r2(pea[id]/paid);if(pp<price-0.01){o.bad.push({k:e.n,t:'Pagado a '+eur(pp)+'/ud. y tu tarifa es '+eur(price)+'/ud.',d:r2((pp-price)*paid)});return}}
+      o.ok.push({k:e.n,t:u(paid,e)});return}
+    const de=e.importe?d:r2(d*price);
+    (d<0?o.bad:o.more).push({k:e.n,t:'Registrado '+u(reg,e)+' · pagado '+u(paid,e),d:de||null});
+  });
+  // otros conceptos
+  const raj=rm.aj||{};
+  [...new Set([...Object.keys(raj).filter(k=>+raj[k]),...Object.keys(pa)])].forEach(id=>{
+    const a=S.cfg.ajustes.find(x=>x.id===id)||{n:id},reg=+raj[id]||0,paid=pa[id]||0,d=r2(paid-reg);
+    if(Math.abs(d)<0.015)o.ok.push({k:a.n,t:eur(paid)});
+    else(d<0?o.bad:o.more).push({k:a.n,t:'Registrado '+eur(reg)+' · nómina '+eur(paid),d});
+  });
+  const cc=calc(M);
+  return{out:o,est:cc.neto,netoPaid:st.p.neto!=null?st.p.neto:t.neto,retApp:cc.ret,retNom:t.ret};
 }
-function next(){if(qi>=queue.length){closeModal();toast(saved+' de '+qn+' nóminas guardadas.');queue=[];return}run(queue[qi++])}
+function learnRules(){
+  if(!st||!st.learn)return;
+  const rules=(S.cfg.rules||[]).slice();let ch=false;
+  st.items.forEach(it=>{
+    if(it.coy||it.to===it.auto)return;
+    const r={p:it.key,to:it.to,n:it.name};
+    if(it.to.startsWith('e:')&&it.l.cant&&+it.n>0){const e=ex(it.to.slice(2));if(e&&!e.importe)r.h=r2(it.l.cant/it.n)}
+    const k=rules.findIndex(x=>x.p===r.p);if(k>=0)rules[k]=r;else rules.push(r);ch=true;
+  });
+  if(ch){S.cfg.rules=rules;if(S.draft)S.draft.rules=clone(rules);saveCfg()}
+}
+function next(){if(qi>=queue.length){closeModal();queue=[];st=null;return}run(queue[qi++])}
+
 
 /* --- entrada --- */
 async function run(file){
@@ -673,7 +722,7 @@ document.getElementById('nomFile').addEventListener('change',e=>{const fs=[...e.
 function rulesBlock(){
   const rs=S.cfg.rules||[];if(!rs.length)return'';
   const tn=to=>{const[g,id]=to.includes(':')?to.split(':'):[to,''];if(g==='f')return(S.cfg.fijos.find(x=>x.id===id)||{}).n||id;if(g==='e')return(ex(id)||{}).n||id;if(g==='a')return(S.cfg.ajustes.find(x=>x.id===id)||{}).n||id;return{ign:'Ignorar',irpf:'Retención IRPF',ss:'Cuota del trabajador'}[to]||to};
-  return`<h3 class="sec">Conceptos aprendidos de la nómina</h3><div class="card"><p class="small muted" style="margin:0 0 6px">Asignaciones que hiciste al leer una nómina. Se aplican automáticamente en las siguientes.</p>
+  return`<h3 class="sec">Conceptos aprendidos de la nómina</h3><div class="card"><p class="small muted" style="margin:0 0 6px">Asignaciones que hiciste al comprobar una nómina. Se aplican automáticamente en las siguientes.</p>
   ${rs.map((r,i)=>`<div class="kv"><span class="k">${esc(r.n||r.p)} → ${esc(tn(r.to))}${r.h?` <span class="small muted">(${fmtIn(r.h)} h/ud.)</span>`:''}</span><button class="x" data-act="ruledel" data-i="${i}" aria-label="Olvidar ${esc(r.n||r.p)}">×</button></div>`).join('')}</div>`;
 }
 function ruleDel(i){const rs=(S.cfg.rules||[]).slice();rs.splice(i,1);S.cfg.rules=rs;if(S.draft)S.draft.rules=clone(rs);saveCfg();render()}
@@ -763,7 +812,7 @@ function vResumen(){
     <div class="kv"><span class="k">Cobrado</span><span class="v">${p.real!=null?eur(p.real):'—'}</span></div>
     ${p.real!=null?`<div class="kv"><span class="k">Diferencia</span><span class="v">${difHTML(p.dif)}</span></div>`:''}
     <div class="btns"><button class="btn primary" data-act="real" data-m="${prevM}">${p.real!=null?'Corregir lo cobrado':'Anotar lo cobrado'}</button><button class="btn" data-act="det" data-m="${prevM}">Desglose</button></div>
-    <div class="btns" style="margin-top:8px"><button class="btn" data-act="leer">Leer nómina (captura o PDF)</button></div>
+    <div class="btns" style="margin-top:8px"><button class="btn" data-act="leer">Comprobar nómina (captura o PDF)</button></div>
   </div>`;
   const hist=[];for(let i=2;i<14&&hist.length<4;i++){const M=addM(heroM,-i);if(hasData(M))hist.push(calc(M))}
   html+=`<h3 class="sec">Historial reciente</h3><div class="card list">${hist.length?hist.map(rowHTML).join(''):'<div class="empty">Aquí aparecerán las nóminas anteriores a medida que registres actividad y anotes lo cobrado.</div>'}</div>`;
@@ -782,8 +831,8 @@ function monthsAll(){
 }
 function vMeses(){
   const ms=monthsAll();
-  return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3 class="sec">Nóminas</h3><span style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" data-act="leer">Leer nóminas</button><button class="btn" data-act="otro">Registrar otro mes</button></span></div>
-  <p class="small muted" style="margin:0 0 10px">«Leer nóminas» admite capturas o PDF, y puedes elegir varias a la vez para meter el año entero.</p>
+  return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3 class="sec">Nóminas</h3><span style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" data-act="leer">Comprobar nóminas</button><button class="btn" data-act="otro">Registrar otro mes</button></span></div>
+  <p class="small muted" style="margin:0 0 10px">«Comprobar nóminas» compara la nómina (captura o PDF) con lo que tienes registrado y avisa de lo que falte por cobrar. Puedes elegir varias a la vez.</p>
   <div class="card list">${ms.map(M=>rowHTML(calc(M))).join('')}</div>
   <p class="small muted">Cada nómina suma los fijos de ese mes y los extras realizados el mes anterior. Pulsa una fila para ver el desglose, editar la actividad o anotar lo cobrado.</p>`;
 }
@@ -924,7 +973,7 @@ function wizRender(){
     ${w.i>0?'<button class="btn" data-w="back">Atrás</button>':'<button class="btn" data-w="close">Ahora no</button>'}
     ${last?'<button class="btn primary" data-w="save">Guardar</button>':'<button class="btn primary" data-w="next">Siguiente</button>'}</div>
     ${!last&&w.i<w.steps.length-2?'<div style="text-align:center"><button class="btn link small" data-w="none">No he hecho más extras este mes</button></div>':''}
-    <div style="text-align:center"><button class="btn link small" data-act="leer" data-m="${N}">Leer la nómina de ${mesN(N)} (captura o PDF)</button></div>`;
+    <div style="text-align:center"><button class="btn link small" data-act="leer" data-m="${N}">Comprobar la nómina de ${mesN(N)} (captura o PDF)</button></div>`;
   openModal(head+body+foot);
   wizCalcLine();
 }
@@ -959,7 +1008,7 @@ function openReal(M,auto){
   openModal(`<div class="eyebrow">Nómina de ${lab(M)}</div><h4>¿Cuánto has cobrado?</h4>
   <p class="muted small">Importe neto ingresado. Estimado: <span class="mono">${eur(c.neto)}</span>.</p>
   <div class="field" style="margin-top:14px"><label for="realv">Cobrado real</label><input class="inp num mono" id="realv" inputmode="decimal" autofocus value="${c.real!=null?fmtIn(c.real):''}" placeholder="0,00" style="font-size:26px;height:56px"></div>
-  <div style="text-align:center;margin-top:8px"><button class="btn link small" data-act="leer" data-m="${M}">Leer la nómina (captura o PDF)</button></div>
+  <div style="text-align:center;margin-top:8px"><button class="btn link small" data-act="leer" data-m="${M}">Comprobar la nómina (captura o PDF)</button></div>
   <div class="foot">${auto?'<button class="btn" id="rNo">Aún no</button>':(c.real!=null?'<button class="btn danger" id="rDel">Quitar</button>':'<button class="btn" id="rNo">Cancelar</button>')}<button class="btn primary" id="rOk">Guardar</button></div>`);
   const no=M_EL.querySelector('#rNo');if(no)no.onclick=closeModal;
   const del=M_EL.querySelector('#rDel');if(del)del.onclick=()=>{const r=rec(M);delete r.real;delete r.fijosSnap;delete r.retSnap;closeModal();saveRec(M);render()};
@@ -992,7 +1041,7 @@ function openDet(M){
   <div class="btns">
     <button class="btn primary" data-act="real" data-m="${M}">${c.real!=null?'Corregir lo cobrado':'Anotar lo cobrado'}</button>
     <button class="btn" data-act="wiz" data-m="${A}">${c.hasAct?'Editar':'Registrar'} actividad de ${mesN(A)}</button>
-    <button class="btn" data-act="leer" data-m="${M}">Leer nómina (captura o PDF)</button>
+    <button class="btn" data-act="leer" data-m="${M}">Comprobar nómina (captura o PDF)</button>
     ${(c.closed||a.actConf)?`<button class="btn" data-act="reprice" data-m="${M}">Aplicar tarifas actuales</button>`:''}
     ${(S.recs[M]||a.act)?`<button class="btn danger" data-act="delm" data-m="${M}">Borrar datos</button>`:''}
   </div>
@@ -1071,7 +1120,7 @@ document.addEventListener('click',async e=>{
   else if(a==='syncnow')SY.now(true);
   else if(a==='syncoff')SY.off();
   else if(a==='otro'){
-    openModal(`<div class="eyebrow">Registrar actividad</div><h4>Elige el mes de actividad</h4><p class="small muted">Los extras de ese mes se cobran en la nómina del mes siguiente.</p><div class="field" style="margin-top:12px"><label for="omes">Mes</label><input class="inp" type="month" id="omes" value="${ym()}"></div><div class="foot"><button class="btn" data-act="close">Cancelar</button><button class="btn primary" id="oOk">Continuar</button></div><div style="text-align:center;margin-top:6px"><button class="btn link small" data-act="leer">O lee las nóminas desde capturas o PDF</button></div>`);
+    openModal(`<div class="eyebrow">Registrar actividad</div><h4>Elige el mes de actividad</h4><p class="small muted">Los extras de ese mes se cobran en la nómina del mes siguiente.</p><div class="field" style="margin-top:12px"><label for="omes">Mes</label><input class="inp" type="month" id="omes" value="${ym()}"></div><div class="foot"><button class="btn" data-act="close">Cancelar</button><button class="btn primary" id="oOk">Continuar</button></div><div style="text-align:center;margin-top:6px"><button class="btn link small" data-act="leer">O comprueba nóminas desde capturas o PDF</button></div>`);
     M_EL.querySelector('#oOk').onclick=()=>{const v=M_EL.querySelector('#omes').value;if(!/^\d{4}-\d{2}$/.test(v)){toast('Elige un mes.');return}closeModal();wizStart(v,false)};
   }
   else if(a==='reprice'){
