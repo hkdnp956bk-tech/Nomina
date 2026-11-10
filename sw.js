@@ -1,5 +1,5 @@
 // Cambia el número de versión cada vez que actualices index.html
-const CACHE = 'nomina-v6';
+const CACHE = 'nomina-v7';
 const FILES = ['./', './index.html', './manifest.json', './icon-180.png', './icon-512.png', './pdf.min.js', './pdf.worker.min.js'];
 // Lector de capturas (se descarga la primera vez y se guarda)
 const LIBS = ['cdn.jsdelivr.net', 'tessdata.projectnaptha.com'];

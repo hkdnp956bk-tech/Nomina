@@ -177,7 +177,7 @@ textarea.inp{min-height:160px;font-family:var(--mono);font-size:12px}
 <div id="modal"></div>
 <div class="toast" id="toast" hidden></div>
 <input type="file" id="importFile" accept="application/json,.json" hidden>
-<input type="file" id="nomFile" accept="image/*,application/pdf,.pdf" hidden>
+<input type="file" id="nomFile" accept="image/*,application/pdf,.pdf" multiple hidden>
 
 <script>
 (()=>{
@@ -392,6 +392,9 @@ const isNum=t=>/^-?\d[\d.,]*[.,]\d{2}$/.test(clean(t));
 function pnum(t){t=clean(t);const neg=t.startsWith('-');t=t.replace(/^-/,'');const i=Math.max(t.lastIndexOf(','),t.lastIndexOf('.'));const v=parseFloat(t.slice(0,i).replace(/[.,]/g,'')+'.'+t.slice(i+1));return neg?-v:v}
 const r2=v=>Math.round(v*100)/100;
 let st=null; // estado de la revisión
+let queue=[],qi=0,qn=0,hint=null,saved=0;
+const eyebrow=()=>'Leer nómina'+(qn>1?' · '+qi+' de '+qn:'');
+const newer=M=>!!M&&Object.keys(S.recs).some(k=>k>M&&S.recs[k]&&S.recs[k].real!=null);
 
 function status(msg){const el=document.getElementById('niSt');if(el)el.textContent=msg}
 function loadScript(src){return new Promise((res,rej)=>{if(window.Tesseract)return res();const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error('net'));document.head.appendChild(s)})}
@@ -549,7 +552,7 @@ function totals(){
   const used=st.items.filter(i=>i.to!=='ign'),dev=r2(used.reduce((s,i)=>s+i.dev,0)),ded=r2(used.reduce((s,i)=>s+i.ded,0));
   const irpf=r2(st.items.filter(i=>i.to==='irpf').reduce((s,i)=>s+i.ded,0)),ss=r2(st.items.filter(i=>i.to==='ss').reduce((s,i)=>s+i.ded,0));
   const bruto=r2(st.items.filter(i=>/^[fea]:/.test(i.to)&&!(i.to==='f:aport')).reduce((s,i)=>s+i.dev-i.ded,0));
-  return{dev,ded,irpf,ss,bruto,ret:bruto?r2(irpf/bruto*100):null,neto:r2(dev-ded)};
+  return{dev,ded,irpf,ss,bruto,ret:bruto?Math.round(irpf/bruto*1e6)/1e4:null,neto:r2(dev-ded)};
 }
 function itemRow(it,i){
   const isE=it.to.startsWith('e:'),e=isE&&ex(it.to.slice(2));
@@ -571,7 +574,8 @@ function draw(){
   const unk=st.items.filter(i=>i.to==='?').length;
   const ord=['?','f:','e:','a:','irpf','ss','ign'];
   const idx=st.items.map((it,i)=>i).sort((a,b)=>{const g=x=>ord.findIndex(p=>st.items[x].to.startsWith(p));return g(a)-g(b)||a-b});
-  openModal(`<div class="eyebrow">Leer nómina</div><h4>Revisa lo leído</h4>
+  if(!st.updTouched)st.upd=!newer(M);
+  openModal(`<div class="eyebrow">${eyebrow()}</div><h4>Revisa lo leído</h4>
   <div class="field" style="margin-top:10px"><label for="niM">Nómina de</label><input class="inp" type="month" id="niM" value="${M||''}"></div>
   ${M?`<p class="small muted" style="margin:6px 0 0">Las guardias y extras se registran como actividad de ${lab(A)}.</p>`:''}
   ${exists?`<p class="small" style="margin:6px 0 0;color:var(--brass)">Ya hay datos de esta nómina: se sustituirán.</p>`:''}
@@ -586,12 +590,15 @@ function draw(){
   <div class="field" style="margin-top:12px"><label for="niNeto">Cobrado real (neto)</label><input class="inp num mono" id="niNeto" inputmode="decimal" value="${fmtIn(st.netoEdit!=null?st.netoEdit:(st.p.neto!=null?st.p.neto:t.neto))}" style="font-size:20px"></div>
   ${st.p.neto!=null&&Math.abs(st.p.neto-t.neto)>0.015?`<p class="small" style="color:var(--neg,#b42318)">El neto leído (${eur(st.p.neto)}) no coincide con devengos − deducciones (${eur(t.neto)}). Revisa los importes.</p>`:''}
   <label class="switch small" style="margin-top:14px"><span>Actualizar mis tarifas con los importes de esta nómina</span><input type="checkbox" id="niUpd"${st.upd?' checked':''}></label>
+  ${newer(M)?'<p class="small muted" style="margin:4px 0 0">Ya tienes nóminas más recientes registradas, así que por defecto no se cambian tus tarifas actuales.</p>':''}
   <label class="switch small" style="margin-top:10px"><span>Recordar mis asignaciones para próximas nóminas</span><input type="checkbox" id="niLearn"${st.learn?' checked':''}></label>
-  <div class="foot"><button class="btn" data-act="close">Cancelar</button><button class="btn primary" id="niOk">Guardar</button></div>`);
+  <div class="foot"><button class="btn" id="niCancel">${qi<qn?'Cancelar todo':'Cancelar'}</button>${qi<qn?'<button class="btn" id="niSkip">Saltar</button>':''}<button class="btn primary" id="niOk">${qi<qn?'Guardar y seguir':'Guardar'}</button></div>`);
   const sheet=M_EL.querySelector('.sheet');if(sheet&&st.scroll)sheet.scrollTop=st.scroll;
   M_EL.querySelector('#niM').onchange=e=>{st.M=/^\d{4}-\d{2}$/.test(e.target.value)?e.target.value:null;redraw()};
   M_EL.querySelector('#niNeto').oninput=e=>{st.netoEdit=num(e.target.value)};
-  M_EL.querySelector('#niUpd').onchange=e=>{st.upd=e.target.checked};
+  M_EL.querySelector('#niUpd').onchange=e=>{st.upd=e.target.checked;st.updTouched=true};
+  M_EL.querySelector('#niCancel').onclick=()=>{queue=[];closeModal();st=null;if(saved)toast(saved+' nómina'+(saved>1?'s guardadas.':' guardada.'))};
+  const sk=M_EL.querySelector('#niSkip');if(sk)sk.onclick=()=>next();
   M_EL.querySelector('#niLearn').onchange=e=>{st.learn=e.target.checked};
   M_EL.querySelectorAll('[data-ni="to"]').forEach(s=>s.onchange=()=>{const it=st.items[+s.dataset.i];it.to=s.value;if(it.to.startsWith('e:')){it.n=unitsFor(it.to.slice(2),it.l,null)}redraw()});
   M_EL.querySelectorAll('[data-ni="n"]').forEach(s=>s.oninput=()=>{st.items[+s.dataset.i].n=num(s.value)});
@@ -636,29 +643,33 @@ function save(){
   }
   closeModal();
   saveRec(A);saveRec(M);if(cfgCh){saveCfg();if(!S.dirty)S.draft=null}
-  render();toast('Nómina de '+lab(M)+' guardada.');
-  st=null;
+  render();saved++;st=null;
+  if(qi<queue.length)next();else{toast(qn>1?saved+' de '+qn+' nóminas guardadas.':'Nómina de '+lab(M)+' guardada.');queue=[]}
 }
+function next(){if(qi>=queue.length){closeModal();toast(saved+' de '+qn+' nóminas guardadas.');queue=[];return}run(queue[qi++])}
 
 /* --- entrada --- */
 async function run(file){
   st={upd:true,learn:true,scroll:0,netoEdit:null};
-  openModal(`<div class="eyebrow">Leer nómina</div><h4>Leyendo…</h4><p class="muted small" id="niSt">Preparando…</p><p class="small muted">La nómina se lee en este dispositivo y no se envía a ningún sitio.</p><div class="foot"><button class="btn" data-act="close">Cancelar</button></div>`);
+  openModal(`<div class="eyebrow">${eyebrow()}</div><h4>Leyendo…</h4><p class="muted small" id="niSt">Preparando…</p><p class="small muted">${esc(file.name||'')}</p><p class="small muted">La nómina se lee en este dispositivo y no se envía a ningún sitio.</p><div class="foot"><button class="btn" id="niStop">Cancelar</button></div>`);
+  M_EL.querySelector('#niStop').onclick=()=>{queue=[];closeModal();if(saved)toast(saved+' nómina'+(saved>1?'s guardadas.':' guardada.'))};
   try{
     const isPdf=file.type==='application/pdf'||/\.pdf$/i.test(file.name);
     const toks=isPdf?await fromPDF(file):await fromImage(file);
     if(!M_EL.querySelector('#niSt'))return; // cancelado
     const p=parse(toks);
     if(!p.lines.length)throw new Error('No se han encontrado conceptos en la nómina. Prueba con una captura más nítida o con el PDF.');
-    st.p=p;st.M=p.M;st.items=classify(p.lines);
+    st.p=p;st.M=p.M||(qn===1?hint:null);st.items=classify(p.lines);
     draw();
   }catch(e){
     if(!M_EL.querySelector('#niSt'))return;
-    openModal(`<div class="eyebrow">Leer nómina</div><h4>No se ha podido leer</h4><p class="muted">${esc(e&&e.message&&!/^(img|net)$/.test(e.message)?e.message:'Revisa que el archivo sea una captura o un PDF de la nómina.')}</p><div class="foot"><button class="btn primary" data-act="close">Cerrar</button></div>`);
+    openModal(`<div class="eyebrow">${eyebrow()}</div><h4>No se ha podido leer</h4><p class="small muted">${esc(file.name||'')}</p><p class="muted">${esc(e&&e.message&&!/^(img|net)$/.test(e.message)?e.message:'Revisa que el archivo sea una captura o un PDF de la nómina.')}</p><div class="foot">${qi<queue.length?'<button class="btn" id="niCancel2">Cancelar todo</button><button class="btn primary" id="niNext">Siguiente</button>':'<button class="btn primary" id="niCancel2">Cerrar</button>'}</div>`);
+    M_EL.querySelector('#niCancel2').onclick=()=>{queue=[];closeModal();if(saved)toast(saved+' nómina'+(saved>1?'s guardadas.':' guardada.'))};
+    const nx=M_EL.querySelector('#niNext');if(nx)nx.onclick=()=>next();
   }
 }
-function pick(){document.getElementById('nomFile').click()}
-document.getElementById('nomFile').addEventListener('change',e=>{const f=e.target.files[0];e.target.value='';if(f)run(f)});
+function pick(h){hint=/^\d{4}-\d{2}$/.test(h||'')?h:null;document.getElementById('nomFile').click()}
+document.getElementById('nomFile').addEventListener('change',e=>{const fs=[...e.target.files];e.target.value='';if(!fs.length)return;queue=fs;qn=fs.length;qi=0;saved=0;next()});
 function rulesBlock(){
   const rs=S.cfg.rules||[];if(!rs.length)return'';
   const tn=to=>{const[g,id]=to.includes(':')?to.split(':'):[to,''];if(g==='f')return(S.cfg.fijos.find(x=>x.id===id)||{}).n||id;if(g==='e')return(ex(id)||{}).n||id;if(g==='a')return(S.cfg.ajustes.find(x=>x.id===id)||{}).n||id;return{ign:'Ignorar',irpf:'Retención IRPF',ss:'Cuota del trabajador'}[to]||to};
@@ -771,7 +782,8 @@ function monthsAll(){
 }
 function vMeses(){
   const ms=monthsAll();
-  return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3 class="sec">Nóminas</h3><button class="btn" data-act="otro">Registrar otro mes</button></div>
+  return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3 class="sec">Nóminas</h3><span style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" data-act="leer">Leer nóminas</button><button class="btn" data-act="otro">Registrar otro mes</button></span></div>
+  <p class="small muted" style="margin:0 0 10px">«Leer nóminas» admite capturas o PDF, y puedes elegir varias a la vez para meter el año entero.</p>
   <div class="card list">${ms.map(M=>rowHTML(calc(M))).join('')}</div>
   <p class="small muted">Cada nómina suma los fijos de ese mes y los extras realizados el mes anterior. Pulsa una fila para ver el desglose, editar la actividad o anotar lo cobrado.</p>`;
 }
@@ -911,7 +923,8 @@ function wizRender(){
   const foot=`<div class="foot">
     ${w.i>0?'<button class="btn" data-w="back">Atrás</button>':'<button class="btn" data-w="close">Ahora no</button>'}
     ${last?'<button class="btn primary" data-w="save">Guardar</button>':'<button class="btn primary" data-w="next">Siguiente</button>'}</div>
-    ${!last&&w.i<w.steps.length-2?'<div style="text-align:center"><button class="btn link small" data-w="none">No he hecho más extras este mes</button></div>':''}`;
+    ${!last&&w.i<w.steps.length-2?'<div style="text-align:center"><button class="btn link small" data-w="none">No he hecho más extras este mes</button></div>':''}
+    <div style="text-align:center"><button class="btn link small" data-act="leer" data-m="${N}">Leer la nómina de ${mesN(N)} (captura o PDF)</button></div>`;
   openModal(head+body+foot);
   wizCalcLine();
 }
@@ -946,6 +959,7 @@ function openReal(M,auto){
   openModal(`<div class="eyebrow">Nómina de ${lab(M)}</div><h4>¿Cuánto has cobrado?</h4>
   <p class="muted small">Importe neto ingresado. Estimado: <span class="mono">${eur(c.neto)}</span>.</p>
   <div class="field" style="margin-top:14px"><label for="realv">Cobrado real</label><input class="inp num mono" id="realv" inputmode="decimal" autofocus value="${c.real!=null?fmtIn(c.real):''}" placeholder="0,00" style="font-size:26px;height:56px"></div>
+  <div style="text-align:center;margin-top:8px"><button class="btn link small" data-act="leer" data-m="${M}">Leer la nómina (captura o PDF)</button></div>
   <div class="foot">${auto?'<button class="btn" id="rNo">Aún no</button>':(c.real!=null?'<button class="btn danger" id="rDel">Quitar</button>':'<button class="btn" id="rNo">Cancelar</button>')}<button class="btn primary" id="rOk">Guardar</button></div>`);
   const no=M_EL.querySelector('#rNo');if(no)no.onclick=closeModal;
   const del=M_EL.querySelector('#rDel');if(del)del.onclick=()=>{const r=rec(M);delete r.real;delete r.fijosSnap;delete r.retSnap;closeModal();saveRec(M);render()};
@@ -978,6 +992,7 @@ function openDet(M){
   <div class="btns">
     <button class="btn primary" data-act="real" data-m="${M}">${c.real!=null?'Corregir lo cobrado':'Anotar lo cobrado'}</button>
     <button class="btn" data-act="wiz" data-m="${A}">${c.hasAct?'Editar':'Registrar'} actividad de ${mesN(A)}</button>
+    <button class="btn" data-act="leer" data-m="${M}">Leer nómina (captura o PDF)</button>
     ${(c.closed||a.actConf)?`<button class="btn" data-act="reprice" data-m="${M}">Aplicar tarifas actuales</button>`:''}
     ${(S.recs[M]||a.act)?`<button class="btn danger" data-act="delm" data-m="${M}">Borrar datos</button>`:''}
   </div>
@@ -1050,13 +1065,13 @@ document.addEventListener('click',async e=>{
   else if(a==='csv')csv();
   else if(a==='json')backup();
   else if(a==='import')document.getElementById('importFile').click();
-  else if(a==='leer')NI.pick();
+  else if(a==='leer'){closeModal();NI.pick(M)}
   else if(a==='ruledel')NI.ruleDel(+b.dataset.i);
   else if(a==='syncsetup')SY.setup();
   else if(a==='syncnow')SY.now(true);
   else if(a==='syncoff')SY.off();
   else if(a==='otro'){
-    openModal(`<div class="eyebrow">Registrar actividad</div><h4>Elige el mes de actividad</h4><p class="small muted">Los extras de ese mes se cobran en la nómina del mes siguiente.</p><div class="field" style="margin-top:12px"><label for="omes">Mes</label><input class="inp" type="month" id="omes" value="${ym()}"></div><div class="foot"><button class="btn" data-act="close">Cancelar</button><button class="btn primary" id="oOk">Continuar</button></div>`);
+    openModal(`<div class="eyebrow">Registrar actividad</div><h4>Elige el mes de actividad</h4><p class="small muted">Los extras de ese mes se cobran en la nómina del mes siguiente.</p><div class="field" style="margin-top:12px"><label for="omes">Mes</label><input class="inp" type="month" id="omes" value="${ym()}"></div><div class="foot"><button class="btn" data-act="close">Cancelar</button><button class="btn primary" id="oOk">Continuar</button></div><div style="text-align:center;margin-top:6px"><button class="btn link small" data-act="leer">O lee las nóminas desde capturas o PDF</button></div>`);
     M_EL.querySelector('#oOk').onclick=()=>{const v=M_EL.querySelector('#omes').value;if(!/^\d{4}-\d{2}$/.test(v)){toast('Elige un mes.');return}closeModal();wizStart(v,false)};
   }
   else if(a==='reprice'){
